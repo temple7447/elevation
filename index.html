@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Demo: Find highest elevation in range</title>
+  <title>Demo: Find highest elevation and Measure distances</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
   <link href="https://api.tiles.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />
@@ -31,6 +31,41 @@
       color: #222;
       background-color: #fff;
     }
+
+    .distance-container {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1;
+    }
+
+    .distance-container > * {
+      background-color: rgba(0, 0, 0, 0.5);
+      color: #fff;
+      font-size: 11px;
+      line-height: 18px;
+      display: block;
+      margin: 0;
+      padding: 5px 10px;
+      border-radius: 3px;
+    }
+
+    .button-container {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+    }
+
+    .button {
+      margin: 5px;
+      padding: 5px 10px;
+      cursor: pointer;
+      background-color: #007BFF;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+    }
   </style>
 </head>
 <body>
@@ -41,13 +76,25 @@
     <div>Elevation:&nbsp;<span id="ele"></span></div>
     <div>Highest Elevation Place:&nbsp;<span id="highest-elevation-place"></span></div>
   </div>
+  <div id="distance" class="distance-container"></div>
+  <div class="button-container">
+    <button class="button" onclick="rotateMap('clockwise')">Rotate Clockwise</button>
+    <button class="button" onclick="rotateMap('counterclockwise')">Rotate Counterclockwise</button>
+    <button class="button" onclick="resetRotation()">Reset Rotation</button>
+    <button class="button" onclick="startScan()">Scan</button>
+    <button class="button" onclick="setMapPitch(45)">45°</button>
+    <button class="button" onclick="setMapPitch(75)">75°</button>
+    <button class="button" onclick="setMapPitch(90)">90°</button>
+  </div>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
   <script>
     mapboxgl.accessToken = 'pk.eyJ1IjoidGVtcGxlNzQ0NyIsImEiOiJjbG00NDRpYWIyYWc1M2NwNmZseXp0ajl4In0.mCfPnhtfrVDQKwtBO_p34A';
-    let  map = new mapboxgl.Map({
+    const map = new mapboxgl.Map({
       container: 'map',
       style: 'mapbox://styles/mapbox/streets-v12',
       center: [6.318584, 7.140653],
-      zoom: 11.5
+      zoom: 11.5,
+      pitch: 45, // Set the initial pitch to 45 degrees
     });
 
     let lng;
@@ -57,6 +104,7 @@
     const eleDisplay = document.getElementById('ele');
     const highestElevationPlaceDisplay = document.getElementById('highest-elevation-place');
     const scannedLocations = []; // Array to store scanned locations
+    const markers = []; // Array to store markers for highest elevation locations
 
     const marker = new mapboxgl.Marker({
       'color': '#314ccd'
@@ -103,15 +151,84 @@
 
       // Store the scanned location data in the array
       scannedLocations.push({ lng, lat, elevation: highestElevation });
+
+      // Check if the current location has the same highest elevation as previous locations
+      if (highestElevation === scannedLocations[0]?.elevation) {
+        scannedLocations.push({ lng, lat, elevation: highestElevation });
+      } else if (highestElevation > scannedLocations[0]?.elevation) {
+        // If a new highest elevation is found, clear the previous locations
+        scannedLocations.length = 0;
+        scannedLocations.push({ lng, lat, elevation: highestElevation });
+      }
+
+      // Update markers for locations with the highest elevation
+      updateMarkers();
     }
 
-    // Function to find the highest elevation within the specified range
-    async function findHighestElevationInRange() {
-      let highestElevation = Number.NEGATIVE_INFINITY;
-      let highestElevationLat = null;
-      let highestElevationLng = null;
+    function updateMarkers() {
+      // Remove all previous markers
+      markers.forEach((m) => m.remove());
 
-      for (let i = 0; i < 20; i++) { // You can adjust the number of iterations
+      // Add markers for locations with the highest elevation
+      scannedLocations.forEach((location) => {
+        const marker = new mapboxgl.Marker({
+          'color': '#FF5733' // Change marker color as needed
+        })
+          .setLngLat([location.lng, location.lat])
+          .addTo(map);
+
+        // Add a popup to the marker to display elevation information
+        new mapboxgl.Popup()
+          .setLngLat([location.lng, location.lat])
+          .setHTML(`Elevation: ${location.elevation.toFixed(2)} meters`)
+          .addTo(map);
+
+        // Store the marker in the markers array for later removal
+        markers.push(marker);
+      });
+    }
+
+    function rotateMap(direction) {
+      const currentBearing = map.getBearing();
+      let newBearing;
+
+      if (direction === 'clockwise') {
+        newBearing = currentBearing - 30; // Rotate clockwise by 30 degrees
+      } else if (direction === 'counterclockwise') {
+        newBearing = currentBearing + 30; // Rotate counterclockwise by 30 degrees
+      }
+
+      map.rotateTo(newBearing, { duration: 1000 }); // You can adjust the rotation duration as needed
+    }
+
+    // Function to reset the map rotation
+    function resetRotation() {
+      map.rotateTo(0, { duration: 1000 }); // Reset rotation to 0 degrees with a duration of 1 second
+    }
+
+    // Function to start and stop scanning
+    let scanning = false; // Track if scanning is in progress
+
+    function startScan() {
+      if (scanning) {
+        // If scanning is already in progress, stop it
+        stopScan();
+      } else {
+        // If not scanning, start the scan process
+        scanning = true;
+        scanArea();
+      }
+    }
+
+    function stopScan() {
+      // Stop the scan process
+      scanning = false;
+      // Optionally, you can reset the map or perform other actions when stopping the scan
+      // For example, map.setBearing(0) to reset the map's bearing
+    }
+
+    async function scanArea() {
+      while (scanning) {
         const [lng, lat] = getRandomLatLong();
         marker.setLngLat([lng, lat]).addTo(map);
         lngDisplay.textContent = lng.toFixed(2);
@@ -119,52 +236,31 @@
 
         await getElevation();
 
-        if (parseFloat(eleDisplay.textContent) > highestElevation) {
-          highestElevation = parseFloat(eleDisplay.textContent);
-          highestElevationLat = lat;
-          highestElevationLng = lng;
-        }
-      }
+        // Provide instructions on where to place the scan
+        console.log(`Place the scan at Latitude: ${lat.toFixed(2)}, Longitude: ${lng.toFixed(2)}`);
 
-      if (highestElevationLat !== null && highestElevationLng !== null) {
-        console.log(`Highest elevation found at Latitude: ${highestElevationLat}, Longitude: ${highestElevationLng}, Elevation: ${highestElevation} meters`);
-      } else {
-        console.log('No data found in the specified range.');
-      }
-
-      // Process the scanned locations array to find the overall highest elevation
-      let overallHighestElevation = Number.NEGATIVE_INFINITY;
-      let overallHighestLocation = null;
-
-      scannedLocations.forEach((location) => {
-        if (location.elevation > overallHighestElevation) {
-          overallHighestElevation = location.elevation;
-          overallHighestLocation = location;
-        }
-      });
-
-      if (overallHighestLocation) {
-        console.log(`Overall highest elevation found at Latitude: ${overallHighestLocation.lat}, Longitude: ${overallHighestLocation.lng}, Elevation: ${overallHighestLocation.elevation} meters`);
-      } else {
-        console.log('No data found in the scanned locations.');
+        // You can adjust the time delay between scans (in milliseconds)
+        // For example, setTimeout(scanArea, 2000); will scan every 2 seconds
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
-
-    // Call the function to find the highest elevation within the range
-    findHighestElevationInRange();
 
     // Function to generate random latitude and longitude within the specified range
     function getRandomLatLong() {
-      const startLat = 7.050;
-      const endLat = 7.1200;
-      const startLng = 6.260;
-      const endLng = 6.310;
+      const startLat = 7.100;
+      const endLat = 7.300;
+      const startLng = 6.290;
+      const endLng = 6.330;
       const randomLat = startLat + Math.random() * (endLat - startLat);
       const randomLng = startLng + Math.random() * (endLng - startLng);
-   
-   
       return [randomLng, randomLat];
     }
+
+    // Function to set the map's pitch to the specified angle
+    function setMapPitch(pitchAngle) {
+      map.setPitch(pitchAngle);
+    }
+
   </script>
 </body>
 </html>
